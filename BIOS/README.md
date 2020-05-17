@@ -5,7 +5,7 @@ See [8088 BIOS](https://github.com/skiselev/8088_bios) GitHub repository for the
 
 # Update from ROM file into Micro 8088 system
 
-uFLASH.exe -p -i biosxxx.rom -a FA00
+uFLASH.exe -p -i biosxxx.rom -a FA00 -t 30
 
 xxx being the BIOS version to update, for example 098
 
