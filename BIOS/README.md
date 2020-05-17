@@ -7,7 +7,7 @@ See [8088 BIOS](https://github.com/skiselev/8088_bios) GitHub repository for the
 
 uFLASH.exe -p -i biosxxx.rom -a FA00
 
-xxx being the BIOS version to update, for example 097
+xxx being the BIOS version to update, for example 098
 
 # About uFLASH
 
