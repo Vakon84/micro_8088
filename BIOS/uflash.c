@@ -60,6 +60,8 @@ struct{
 char *exec_name;
 
 unsigned int cmd_addr1 = 0x5555, cmd_addr2 = 0x2AAA;
+unsigned int timer;
+
 
 /* FIXME: should disable NMI too */
 void interrupts_disable();
@@ -73,7 +75,7 @@ void usage()
 	printf("uflash, Version %s. Copyright (C) 2020 Aitor Gomez\n", VERSION);
 	printf("This program is adapted from Sergey's xiflash\n");
 	printf("Distributed under the terms of the GNU General Public License\n\n");
-	printf("Usage: %s [-r|-p|-v|-c] [-i <input_file>] [-o <output_file>] [-a <address>] [-s <size>]\n\n", exec_name);
+	printf("Usage: %s [-r|-p|-v|-c] [-i <input_file>] [-o <output_file>] [-a <address>] [-s <size>] [-t <secs at 4.77Mhz>]\n\n", exec_name);
 	printf("Options:\n");
 	printf("   -r   - Read mode. Save current flash ROM content into <output_file>.\n");
 	printf("   -p   - Program mode. Program flash ROM with <input_file> data.\n");
@@ -85,7 +87,10 @@ void usage()
 	printf("   -a   - Segment address of flash ROM area to work on in hexadecimal format.\n");
 	printf("          Must be in E000-F000 range. The default is F800 (BIOS address).\n");
 	printf("   -s   - Specifies ROM size for -r and -c options.\n");
-	printf("	  The default is %u.\n\n", CHUNK_SIZE);
+	printf("	  The default is %u.\n", CHUNK_SIZE);
+	
+	printf("   -t   - Set the timer before memory programming. \n");
+	printf("	  Useful to change memory half in Micro8088.\n\n", CHUNK_SIZE);
 
 	exit(1);
 }
@@ -354,8 +359,7 @@ void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
 	int eeprom_index;
 	__segment rom_start;
 	unsigned int page, num_pages, page_paragraph;
-	char buffer [33];
-	int timeout;
+	char buffer [33];	
 	
 	/* try 0xF000 first */
 	rom_start = 0xF000;
@@ -388,13 +392,17 @@ void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
 
 	
 	printf("Programming the flash ROM with %u bytes starting at address 0x%04X.\n", rom_size, rom_addr);	
-	for (timeout = 30;timeout > 1; timeout--)
-	{		
-		itoa(timeout,buffer,10);
-		printf("\rSet system ROM now... %s ", buffer);
-		delay(1000);
+	
+	if (timer > 0)
+	{	
+		for (;timer > 1; timer--)
+		{		
+			itoa(timer,buffer,10);
+			printf("\rSet system ROM now... %s ", buffer);
+			delay(1000);
+		}
+		printf("\rSet system ROM now... OK\n", buffer);
 	}
-	printf("\rSet system ROM now... OK\n", buffer);
 	printf("Please wait... Do not reboot the system...\n");
 	interrupts_disable();
 
@@ -458,6 +466,12 @@ int main(int argc, char *argv[])
 				error("Option -s requires an argument.");
 			}
 			continue;
+		}
+		if (!strcmp(argv[i], "-t")) {
+			if (++i < argc) {
+				sscanf(argv[i], "%u", &timer);			
+			continue;
+			}
 		}
 		if (!strcmp(argv[i], "-r")) {
 			mode |= MODE_READ;
