@@ -100,6 +100,39 @@ void error(char *message) {
 	usage();
 }
 
+void display_print(unsigned char *buf)
+{
+	unsigned char far *display_m=(unsigned char far*)0xb0000000;
+	unsigned char far *display_c=(unsigned char far*)0xb8000000;
+	unsigned char attr_c =  0x4F; // Attribute Bright White over Red
+	unsigned char attr_m =  0x70; // Attribute Inverse Video
+	
+	int offset = 0x13c; // Position 71,1 on 80x25 display
+	
+	int i = 0;
+	
+	if (!buf[1])
+	{
+		display_c[offset] = '0';
+		display_c[offset + 1] = attr_c;
+		display_m[offset] = '0';
+		display_m[offset + 1] = attr_m;
+		offset+=2;
+	}	
+	
+	while (buf[i])
+	{
+		display_c[offset] = buf[i];
+		display_c[offset + 1] = attr_c;
+		display_m[offset] = buf[i];
+		display_m[offset + 1] = attr_m;
+		offset+=2;
+		i++;
+	}	
+	
+	
+}
+
 void delay(unsigned int delay)
 {
 	while (delay--) {
@@ -392,20 +425,24 @@ void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
 
 	
 	printf("Programming the flash ROM with %u bytes starting at address 0x%04X.\n", rom_size, rom_addr);	
+	printf("Please wait... Do not reboot the system...\n");	
 	
 	if (timer > 0)
-	{	
-		for (;timer > 1; timer--)
+	{
+		printf("Set system ROM now... \r");	
+
+		interrupts_disable();
+		
+		for (;timer > 0; timer--)
 		{		
 			itoa(timer,buffer,10);
-			printf("\rSet system ROM now... %s ", buffer);
+			display_print(buffer);
 			delay(1000);
 		}
-		printf("\rSet system ROM now... OK\n", buffer);
 	}
-	printf("Please wait... Do not reboot the system...\n");
+	
 	interrupts_disable();
-
+	
 	for (page = 0; page < rom_size / eeproms[eeprom_index].page_size; page++) {
 		outp(0x80, page);
 		if (eeproms[eeprom_index].need_erase) {
@@ -415,7 +452,7 @@ void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
 	}
 
 	interrupts_enable();
-	printf("Flash ROM has been programmed successfully.\nPlease reboot the system.\n");
+	printf("\nFlash ROM has been programmed successfully.\nPlease reboot the system.\n");
 }
 
 int main(int argc, char *argv[])
