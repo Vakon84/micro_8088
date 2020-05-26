@@ -13,7 +13,7 @@ xxx being the BIOS version to update, for example 098
 
 This is a modification of Sergey's original app from his other project xi8088, original sources here:
 
-http://www.malinov.com/Home/sergeys-p...
+http://www.malinov.com/Home/sergeys-projects/xi-8088/xiflash-0.1.tar.gz
 
 It has been made compatible at the level of timers with Sergey's Micro8088 project, and a countdown has been added before proceeding to flash the memory (with -t sec optional parameter). This will allow, if needed, to hot swap the half that you want to program using the corresponding switch of the board.
 
