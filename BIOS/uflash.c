@@ -23,6 +23,7 @@
  *
  ************************************************************************/
 
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <io.h>
@@ -40,6 +41,18 @@
 #define MODE_VERIFY	(1 << 2)
 #define MODE_CHECKSUM	(1 << 3)
 #define NUM_DEVICES 5
+#define MAX_PAGESIZE 16384
+
+union {
+    struct {
+        unsigned short off;
+        unsigned short seg;
+    } s;
+    unsigned char __far *ptr;
+} rom;
+
+unsigned char romb[MAX_PAGESIZE];
+unsigned char huge *romt;
 
 struct{
 	unsigned char vendor_id;
@@ -61,7 +74,6 @@ char *exec_name;
 
 unsigned int cmd_addr1 = 0x5555, cmd_addr2 = 0x2AAA;
 unsigned int timer;
-
 
 /* FIXME: should disable NMI too */
 void interrupts_disable();
@@ -87,10 +99,10 @@ void usage()
 	printf("   -a   - Segment address of flash ROM area to work on in hexadecimal format.\n");
 	printf("          Must be in E000-F000 range. The default is F800 (BIOS address).\n");
 	printf("   -s   - Specifies ROM size for -r and -c options.\n");
-	printf("	  The default is %u.\n", CHUNK_SIZE);
+	printf("          The default is %lu.\n", CHUNK_SIZE);
 	
 	printf("   -t   - Set the timer before memory programming. \n");
-	printf("	  Useful to change memory half in Micro8088.\n\n", CHUNK_SIZE);
+	printf("          Useful to change memory half in Micro8088.\n\n");
 
 	exit(1);
 }
@@ -100,14 +112,12 @@ void error(char *message) {
 	usage();
 }
 
-void display_print(unsigned char *buf)
+void display_print(size_t x, size_t y, unsigned char *buf, unsigned char attr_m, unsigned char attr_c)
 {
-	unsigned char far *display_m=(unsigned char far*)0xb0000000;
-	unsigned char far *display_c=(unsigned char far*)0xb8000000;
-	unsigned char attr_c =  0x4F; // Attribute Bright White over Red
-	unsigned char attr_m =  0x70; // Attribute Inverse Video
-	
-	int offset = 0x13c; // Position 71,1 on 80x25 display
+	unsigned char __far *display_m=(unsigned char __far*)0xb0000000;
+	unsigned char __far *display_c=(unsigned char __far*)0xb8000000;
+
+	int offset = (160 * y) + (x * 2); 
 	
 	int i = 0;
 	
@@ -149,29 +159,30 @@ void delay(unsigned int delay)
 }
 
 
-void rom_verify(unsigned char __far *rom_addr, unsigned char *buf, size_t rom_size) {
-	unsigned int i, diff = 0;
+void rom_verify(unsigned char __far *rom_addr, unsigned char __far *buf, unsigned long rom_size) {
+	unsigned long i, diff = 0;
 
 	for (i = 0; i < rom_size; i++) {
 		if (rom_addr[i] != buf[i]) {
-			printf("WARNING: Difference found at 0x%04X: ROM = 0x%02X; file 0x%02X\n", i, rom_addr[i], buf[i]);
+			printf("WARNING: Difference found at 0x%08X: ROM = 0x%02X; file 0x%02X\n", i, rom_addr[i], buf[i]);
 			diff++;
 		}	
 	}
 
 	if (diff > 0) {
-		printf("WARNING: %d differences found\n", diff);
+		printf("WARNING: %lu differences found\n", diff);
 	} else {
 		printf("No differences found\n");
 	}
 }
 
 /* rom_read - DUMP ROM content to a file */
-void rom_read(unsigned char __far *rom_addr, char *out_file, size_t rom_size) {
+void rom_read(unsigned char __far *rom_addr, char *out_file, unsigned long rom_size) {
 	FILE *fp_out;
 	size_t count;
+	unsigned long i, i2;
 
-	printf("Saving ROM content to %s, size %u bytes.\n",
+	printf("Saving ROM content to %s, size %lu bytes.\n",
 		out_file, rom_size);
 
 	if ((fp_out = fopen(out_file, "wb")) == NULL) {
@@ -180,34 +191,62 @@ void rom_read(unsigned char __far *rom_addr, char *out_file, size_t rom_size) {
 		exit(2);
 	}
 	
-	if ((count = fwrite(rom_addr, 1, rom_size, fp_out)) != rom_size) {
-		printf("ERROR: Short write while writing %s. Wrote %u bytes, expected to write %u bytes.\n",
-	               out_file, count, rom_size);
-		exit(3);
-	}
+	for (i = 0; i < rom_size; i += MAX_PAGESIZE)
+	{				
+
+		for (i2 = i; i2 < ((i + MAX_PAGESIZE >= rom_size) ? rom_size : i + MAX_PAGESIZE); i2++)
+		{			
+			romb[i2 - i] =  rom_addr[i2];
+		}	
+		
+		if ((count = fwrite(romb, 1, i2 - i, fp_out)) != i2 - i) {
+		printf("ERROR: Short write while writing %s. Wrote %u bytes, expected to write %lu bytes.\n",
+	               out_file, count, i2 - i);
+			fclose(fp_out);
+			exit(3);
+		}
+		
+	}	
 	fclose(fp_out);
 }
 
-unsigned char *load_file(char *in_file, size_t *rom_size) {
-	FILE *fp_in;
+unsigned long filestat(char *in_file, unsigned char *buf)
+{
+	
+	FILE *fp_in;	
 	size_t count;
-	unsigned char *buf;
-	struct stat st;
-
-	if (stat(in_file, &st) == -1) {
-		printf("ERROR: Failed to stat %s: %s.\n",
-			in_file, strerror(errno));
+	unsigned long result = 0;
+		
+	if ((fp_in = fopen(in_file, "rb")) == NULL) {
+		printf("ERROR: Failed to open %s for reading: %s.\n",
+		       in_file, strerror(errno));
 		exit(4);
 	}
+		
+	while ((count = fread(buf, 1, MAX_PAGESIZE, fp_in)) == MAX_PAGESIZE)
+	{
+		fflush(fp_in);
+		result += count;
+	}
+	result += count;
+	fclose(fp_in);
+		
+	return result;
+}
 
-	*rom_size = st.st_size;
+
+void load_file(char *in_file, unsigned char *buf, unsigned long *rom_size) {
+	unsigned long i,i2;
+	FILE *fp_in;
+	unsigned long count;
+	struct stat st;
+
+	*rom_size = filestat(in_file, buf);
+	
 	if (*rom_size == 0) {
 		printf("ERROR: File %s is empty.\n", in_file);
 		exit(4);
-	}
-
-	printf("Loading flash ROM image from %s, size %u bytes.\n",
-		in_file, *rom_size);
+	}	
 
 	if ((fp_in = fopen(in_file, "rb")) == NULL) {
 		printf("ERROR: Failed to open %s for reading: %s.\n",
@@ -215,23 +254,37 @@ unsigned char *load_file(char *in_file, size_t *rom_size) {
 		exit(4);
 	}
 	
-	if ((buf = (unsigned char *) calloc (*rom_size, 1)) == NULL) {
-		printf("ERROR: Failed to allocate %u bytes for input buffer: %s.\n",
-		       *rom_size, strerror(errno));
+	if ((romt = (unsigned char huge *)halloc(*rom_size % MAX_PAGESIZE != 0 ? (*rom_size / MAX_PAGESIZE) + 1 : *rom_size / MAX_PAGESIZE, MAX_PAGESIZE)) == NULL)
+	{
+		printf("ERROR: Failed to allocate %lu bytes for input rom buffer.\n", *rom_size);
 		exit(5);
 	}
-	if ((count = fread(buf, 1, *rom_size, fp_in)) != *rom_size) {
-		printf("ERROR: Short read while reading %s. Read %u bytes, expected to read %u bytes.\n",
-		       in_file, count, *rom_size);
-		exit(6);
+	
+	rom.ptr = (unsigned char __far *)romt;
+	rom.s.seg += rom.s.off >> 4;
+	rom.s.off = 0;	
+				
+	printf("Loading flash ROM image from %s, size %lu bytes at address %04X:%04X...", in_file, *rom_size, rom.s.seg, rom.s.off);
+
+	for (i = 0; i < *rom_size; i += MAX_PAGESIZE)
+	{
+		fread(buf, 1, MAX_PAGESIZE, fp_in);
+		fflush(fp_in);
+		
+		for (i2 = 0; i2 < MAX_PAGESIZE; i2++)
+			rom.ptr[i + i2] = buf[i2];			
+		
 	}
+
 	fclose(fp_in);
-	return buf;
+	printf("OK\n");
+	
 }
 	               
-unsigned int checksum (unsigned char __far *buf_addr, size_t rom_size)
+unsigned int checksum (unsigned char __far *buf_addr, unsigned long rom_size)
 {
-	unsigned int checksum = 0, i;
+	unsigned int checksum = 0;
+	unsigned long i;
 	for (i = 0; i < rom_size; i++)
 		checksum += buf_addr[i];
 	return checksum;
@@ -317,7 +370,7 @@ int rom_identify(unsigned char __far *rom_start)
 
 int rom_erase_block(unsigned char __far *rom_start, unsigned char __far *rom_addr)
 {
-	unsigned int offset, timeout;
+	unsigned long offset, timeout;
 	volatile unsigned char __far *rom_st = rom_start;
 	volatile unsigned char __far *rom_ad = rom_addr;
 
@@ -339,9 +392,9 @@ int rom_erase_block(unsigned char __far *rom_start, unsigned char __far *rom_add
 	return 1;
 }
 
-int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_addr, unsigned char *buf, unsigned int block_size, unsigned char page_write)
+int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_addr, unsigned char __far *buf, unsigned long block_size, unsigned char page_write)
 {
-	unsigned int offset, timeout;
+	unsigned long offset, timeout;
 	volatile unsigned char __far *rom_st = rom_start;
 	volatile unsigned char __far *rom_ad = rom_addr;
 
@@ -387,17 +440,17 @@ int rom_program_block(unsigned char __far *rom_start, unsigned char __far *rom_a
 	return 1;
 }
 
-void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
+void rom_program(__segment rom_addr, unsigned char __far *buf, unsigned long rom_size)
 {
-	int eeprom_index;
+	unsigned int eeprom_index;
 	__segment rom_start;
-	unsigned int page, num_pages, page_paragraph;
+	unsigned long page, num_pages, page_paragraph;
 	char buffer [33];	
 	
-	/* try 0xF000 first */
+	// try 0xF000 first 
 	rom_start = 0xF000;
 	if ((eeprom_index = rom_identify(rom_start:>0)) == -1) {
-		/* try 0xE000 */
+		// try 0xE000 
 		rom_start = 0xE000;
 		if ((eeprom_index = rom_identify(rom_start:>0)) == -1) {
 			error("Cannot detect Flash ROM type.\nOn Sergey's XT Version 1.0 systems make sure that SW2.6 - SW2.7 are OFF.");
@@ -408,23 +461,30 @@ void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
 		eeproms[eeprom_index].vendor_name, eeproms[eeprom_index].device_name,
 		eeproms[eeprom_index].page_size, rom_start);
 
-	/* check that requested ROM segment is on the page boundary */
+	// check that requested ROM segment is on the page boundary 
 	page_paragraph = eeproms[eeprom_index].page_size / 16;
 	if ((rom_addr / page_paragraph) * page_paragraph != rom_addr) {
 		printf("ERROR: Specified ROM address (0x%04X) doesn't start on the page boundary.\n",
 			rom_addr);
 	}
 
-	/* figure out number of pages to program */
+	// figure out number of pages to program 
 	num_pages = rom_size / eeproms[eeprom_index].page_size;
-	if (num_pages * eeproms[eeprom_index].page_size != rom_size) {
-		printf("ERROR: ROM image size (%u) is is not a multiply of the flash page size.\n",
-			rom_size);
-		exit(10);
-	}
-
 	
-	printf("Programming the flash ROM with %u bytes starting at address 0x%04X.\n", rom_size, rom_addr);	
+	if (eeproms[eeprom_index].page_size <= MAX_PAGESIZE)
+	{	
+		rom_size = num_pages * eeproms[eeprom_index].page_size; // Padding with zeros of the buffer init
+	}
+	else
+	{		
+		if (num_pages * eeproms[eeprom_index].page_size != rom_size) {
+			printf("ERROR: ROM image size (%u) is is not a multiply of the flash page size.\n",
+					rom_size);
+			exit(10);
+		}
+	}
+	
+	printf("Programming the flash ROM with %lu bytes starting at address 0x%04X.\n", rom_size, rom_addr);	
 	printf("Please wait... Do not reboot the system...\n");	
 	
 	if (timer > 0)
@@ -436,10 +496,14 @@ void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
 		for (;timer > 0; timer--)
 		{		
 			itoa(timer,buffer,10);
-			display_print(buffer);
+			
+			display_print(78, 1, buffer, 0x70, 0x4F);
 			delay(1000);
 		}
 	}
+	
+	display_print(69, 1, "FLASHING!!!", 0xF0, 0xCF);
+	delay(1000);
 	
 	interrupts_disable();
 	
@@ -449,9 +513,11 @@ void rom_program(__segment rom_addr, unsigned char *buf, size_t rom_size)
 			rom_erase_block(rom_start:>0, rom_addr:>(eeproms[eeprom_index].page_size * page));
 		}
 		rom_program_block(rom_start:>0, rom_addr:>(eeproms[eeprom_index].page_size * page), buf + (eeproms[eeprom_index].page_size * page), eeproms[eeprom_index].page_size, eeproms[eeprom_index].page_write);
-	}
-
+	}	
+		
+	display_print(68, 1, "  FINISHED  ", 0x70, 0x1F);
 	interrupts_enable();
+	
 	printf("\nFlash ROM has been programmed successfully.\nPlease reboot the system.\n");
 }
 
@@ -460,9 +526,8 @@ int main(int argc, char *argv[])
  	int i;
 	unsigned int mode = 0;
 	__segment rom_seg = 0xF800;
-	char *in_file = NULL, *out_file = NULL;
-	unsigned char *buf;
-	size_t rom_size = CHUNK_SIZE;
+	char *in_file = NULL, *out_file = NULL;	
+	unsigned long rom_size = CHUNK_SIZE;	
 
 	exec_name = argv[0];
 	setbuf(stdout, NULL);
@@ -498,7 +563,7 @@ int main(int argc, char *argv[])
 		}
 		if (!strcmp(argv[i], "-s")) {
 			if (++i < argc) {
-				sscanf(argv[i], "%u", &rom_size);
+				sscanf(argv[i], "%lu", &rom_size);
 			} else {
 				error("Option -s requires an argument.");
 			}
@@ -545,7 +610,8 @@ int main(int argc, char *argv[])
 	
 	if ((mode & MODE_PROG) || (mode & MODE_VERIFY) ||
 	    ((mode & MODE_CHECKSUM) && in_file != NULL)) {
-		buf = load_file(in_file, &rom_size);
+		load_file(in_file, romb, &rom_size);		
+		
 		/* check if ROM size extends beyond 1 MiB */
 		if ((rom_size + 15) / 16 - 1 + rom_seg < rom_seg) {
 			error("ROM image extends beyond 1 MiB. Make sure that the correct image file is specified. Also check -a option's argument (if specified).");
@@ -558,14 +624,14 @@ int main(int argc, char *argv[])
 			       checksum(rom_seg:>0, rom_size));
 		else
 			printf("The checksum of %s is 0x%X\n", in_file,
-			       checksum(buf, rom_size));
+			       checksum(rom.ptr, rom_size));
 	}
 
 	if (mode & MODE_PROG)
-		rom_program(rom_seg, buf, rom_size);
+		rom_program(rom_seg, rom.ptr, rom_size);
 
 	if (mode & MODE_VERIFY)
-		rom_verify(rom_seg:>0, buf, rom_size);
+		rom_verify(rom_seg:>0, rom.ptr, rom_size);
 
 	return 0;
 }
