@@ -19,5 +19,5 @@ It has been made compatible at the level of timers with Sergey's Micro8088 proje
 
 The countdown is programmed to run at approximate speed of seconds with 4.77 Mhz CPU frequency, in configurations of 7.16 MHz or 9.54 MHz the speed will be higher.
 
-![alt text](uflash.gif "uFLASH_in_action")
+![alt text](uflash2.gif "uFLASH_in_action")
 
