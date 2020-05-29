@@ -15,7 +15,7 @@ This is a modification of Sergey's original app from his other project xi8088, o
 
 http://www.malinov.com/Home/sergeys-projects/xi-8088/xiflash-0.1.tar.gz
 
-It has been made compatible at the level of timers with Sergey's Micro8088 project, and a countdown has been added before proceeding to flash the memory (with -t sec optional parameter). This will allow, if needed, to hot swap the half that you want to program using the corresponding switch of the board.
+It has been made compatible at the level of timers with Sergey's Micro8088 project, 64Kb image compatible and a countdown has been added before proceeding to flash the memory (with -t sec optional parameter). This will allow, if needed, to hot swap the half that you want to program using the corresponding switch of the board.
 
 The countdown is programmed to run at approximate speed of seconds with 4.77 Mhz CPU frequency, in configurations of 7.16 MHz or 9.54 MHz the speed will be higher.
 
